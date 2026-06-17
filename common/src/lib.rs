@@ -1,7 +1,6 @@
-use std::time::Instant;
+use std::time::Duration;
 // randdp, timing, verification, class sizes
 
-const A: u128 = 5_u128.pow(13);
 const B: u128 = 1_u128 << 46;
 // Want to generate n uniform psuedo random numbers.
 // a = 5^13
@@ -10,17 +9,45 @@ const B: u128 = 1_u128 << 46;
 // x_k+1 = a*x_k % 2^46
 // Then return r_k = 2^(-46)*x_k
 // Thus 0 < r_k < 1
-pub fn randdp(seed: u128, n: usize) -> Vec<f64> {
+pub fn randdp(seed: u128, n: usize, a: u128) -> Vec<f64> {
     let mut r_k = Vec::with_capacity(n);
     let mut prev_x_k = seed;
+    let c = 2.0_f64.powi(-46);
 
     for _ in 0..n {
-        let x_k = (A * prev_x_k) % B;
-        r_k.push(2.0_f64.powi(-46) * x_k as f64);
+        let x_k = (a * prev_x_k) % B;
+        r_k.push(c * x_k as f64);
         prev_x_k = x_k;
     }
 
     r_k
+}
+
+pub fn assert_approx_eq(left: f64, right: f64, epsilon: f64, explanation: &str) {
+    let relative_error = (left - right).abs() / right.abs();
+    assert!(
+        relative_error < epsilon,
+        "{}: relative_error: {}, epsilon: {}",
+        explanation,
+        relative_error,
+        epsilon
+    );
+}
+
+pub enum Class {
+    A,
+    B,
+    C,
+}
+
+pub fn print_results(
+    _elapsed: Duration,
+    _kernel_name: &str,
+    _class: Class,
+    _problem_size: usize,
+    _operation_count: u64,
+) {
+    todo!()
 }
 
 #[cfg(test)]
@@ -31,7 +58,7 @@ mod tests {
     fn validate_rngddp_range() {
         // All random numbers, r, should follow this rule 0 < r < 1.
         let npb_seed = 271828182845904523;
-        let r = randdp(npb_seed, 1_000);
+        let r = randdp(npb_seed, 1_000, 5_u128.pow(13));
         for elem in r.iter() {
             assert!(
                 *elem > 0.0 && *elem < 1.0,
@@ -45,7 +72,7 @@ mod tests {
     fn validate_rngddp_distribution() {
         // Should be evenly distributed such that n/10 numbers fall between 0.0 -> 0.1 and so on.
         let npb_seed = 271828182845904523;
-        let r = randdp(npb_seed, 1_000);
+        let r = randdp(npb_seed, 1_000, 5_u128.pow(13));
         let mut ranges = vec![];
         let mut lower = 0.0;
         let mut upper = 0.1;
