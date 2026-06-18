@@ -5,3 +5,11 @@ edition = "2024"
 
 [dependencies]
 common = { path = "../common" }
+
+[features]
+default = ["lazy"]
+S = []
+A = []
+B = []
+eager = []
+lazy = []
