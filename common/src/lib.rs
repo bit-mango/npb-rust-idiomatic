@@ -2,6 +2,7 @@ use std::time::Duration;
 // randdp, timing, verification, class sizes
 
 const B: u64 = 1_u64 << 46;
+const C: f64 = 0.000000000000014210854715202004; // 2.0_f64.powi(-46)
 // Want to generate n uniform psuedo random numbers.
 // a = 5^13
 // x_0 = s, a specified initial seed. Where 0 < s < 2^46
@@ -9,11 +10,15 @@ const B: u64 = 1_u64 << 46;
 // x_k+1 = a*x_k % 2^46
 // Then return r_k = 2^(-46)*x_k
 // Thus 0 < r_k < 1
+
+// Before LazyRanddp size was Option<u128> + usize + u128 + f64
+// or 1 + 16 + 8 + 16 + 8 = 48
+// After optimization storing u64 instead
+// 32
 pub struct LazyRanddp {
     current: u64,
     n: usize,
     a: u64,
-    c: f64,
 }
 
 impl LazyRanddp {
@@ -22,7 +27,6 @@ impl LazyRanddp {
             current: seed,
             n,
             a,
-            c: 2.0_f64.powi(-46),
         }
     }
 }
@@ -43,7 +47,7 @@ impl Iterator for LazyRanddp {
         self.current = next;
 
         // Compute r.
-        Some(self.c * next as f64)
+        Some(C * next as f64)
     }
 }
 

@@ -49,8 +49,8 @@ struct EpOutput {
 }
 struct EpKernel {
     n: usize,
-    a: u128,
-    s: u128,
+    a: u64,
+    s: u64,
     expected_x_k_sum: f64,
     expected_y_k_sum: f64,
     expected_counts: [u64; 10],
@@ -65,7 +65,7 @@ impl EpKernel {
         match class {
             Class::S => Self {
                 n: 1 << 24,
-                a: 5_u128.pow(13),
+                a: 5_u64.pow(13),
                 s: 271_828_183,
                 expected_x_k_sum: -3.2478346520347404e3,
                 expected_y_k_sum: -6.958407078382297e3,
@@ -75,7 +75,7 @@ impl EpKernel {
             },
             Class::A => Self {
                 n: 1 << 28,
-                a: 5_u128.pow(13),
+                a: 5_u64.pow(13),
                 s: 271_828_183,
                 expected_x_k_sum: -4.295875165629892e3,
                 expected_y_k_sum: -1.580732573678431e4,
@@ -87,7 +87,7 @@ impl EpKernel {
             },
             Class::B => Self {
                 n: 1 << 30,
-                a: 5_u128.pow(13),
+                a: 5_u64.pow(13),
                 s: 271_828_183,
                 expected_x_k_sum: 4.033815542441498e4,
                 expected_y_k_sum: -2.660669192809235e4,
@@ -224,7 +224,7 @@ impl EpKernel {
 }
 
 fn main() {
-    let class = Class::A;
+    let class = Class::B;
     let mut kernel = EpKernel::from_class(class);
     kernel.run();
     kernel.verify();

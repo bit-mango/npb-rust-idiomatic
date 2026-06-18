@@ -1,5 +1,6 @@
 use common::LazyRanddp;
 use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("Generate 1M psuedo random double precision numbers", |b| {
@@ -15,8 +16,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 for rand in lazy_randdp {
                     sum += rand;
                 }
-
-                assert!(sum > 0.0);
+                black_box(sum); // So compiler doesn't optimize this away.
             },
         )
     });
