@@ -5,11 +5,13 @@ edition = "2024"
 
 [dependencies]
 common = { path = "../common" }
+rayon = "1.12.0"
 
 [features]
-default = ["lazy"]
+default = ["lazy-parallel"]
 S = []
 A = []
 B = []
 eager = []
 lazy = []
+lazy-parallel = []

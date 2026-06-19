@@ -9,3 +9,6 @@ criterion = {version = "0.8.2", features = ["html_reports"]}
 [[bench]]
 name = "randdp_bench"
 harness = false
+
+[dependencies]
+rayon = "1.12.0"

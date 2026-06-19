@@ -1,8 +1,12 @@
 #[cfg(feature = "lazy")]
 use common::LazyRanddp;
 #[cfg(feature = "eager")]
-use common::randdp;
+use common::LazyRanddp;
+#[cfg(feature = "lazy-parallel")]
+use common::ParallelLazyRanddp;
 use common::{Class, assert_approx_eq};
+#[cfg(feature = "lazy-parallel")]
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use std::time::{Duration, Instant};
 
 // TODO Add classes
@@ -97,11 +101,49 @@ impl EpKernel {
                 m_flops: 100.864e3,
                 output: None,
             },
+            Class::C => Self {
+                n: 1 << 32,
+                a: 5_u64.pow(13),
+                s: 271_828_183,
+                expected_x_k_sum: 4.764367927995374e4,
+                expected_y_k_sum: -8.084072988043731e4,
+                expected_counts: [
+                    1572172634, 1501108549, 281805648, 17761221, 424017, 3821, 13, 0, 0, 0,
+                ],
+                m_flops: 100.864e3,
+                output: None,
+            },
+            Class::D => Self {
+                n: 1 << 36,
+                a: 5_u64.pow(13),
+                s: 271_828_183,
+                expected_x_k_sum: 1.982481200946593e5,
+                expected_y_k_sum: -1.020596636361769e5,
+                expected_counts: [
+                    25154622775,
+                    24017899906,
+                    4508609839,
+                    284201296,
+                    6776403,
+                    61541,
+                    197,
+                    0,
+                    0,
+                    0,
+                ],
+                m_flops: 100.864e3,
+                output: None,
+            },
         }
     }
 
     pub fn verify(&self) {
         let output = self.output.expect("run() must be called before verify()");
+
+        let sum_counts = output.counts.iter().sum::<u64>();
+        let sum_expected = self.expected_counts.iter().sum::<u64>();
+
+        assert_eq!(sum_counts, sum_expected, "Count sums should match");
 
         assert_eq!(
             output.counts, self.expected_counts,
@@ -121,12 +163,13 @@ impl EpKernel {
         );
     }
 
-    // Runs in 3.96 sec for Class A.
+    // Runs in 3.05 sec for Class A.
     #[cfg(feature = "eager")]
     pub fn run(&mut self) {
         let time = Instant::now();
-        // TODO can randdp stream random numbers one at a time instead of eagerly building a massive vec of random numbers.
-        let r = randdp(self.s, 2 * self.n, self.a);
+        let lazy_randdp = LazyRanddp::new(self.s, 2 * self.n, self.a);
+        let r = lazy_randdp.to_vec();
+
         let mut x = vec![0.0_f64; self.n];
         let mut y = vec![0.0_f64; self.n];
         // Repeated math here might be able to do something where we set x[i] = y[i-1] maybe? Just need to handle first iteration.
@@ -149,21 +192,9 @@ impl EpKernel {
         }
 
         let mut counts = [0_u64; 10];
-        // This seems to be about 10% faster but save this for actual optimization once benchmarking is set up.
-        // for i in 0..k {
-        //     let max_abs = x_k[i].abs().max(y_k[i].abs());
-        //     counts[max_abs as usize] += 1;
-        // }
         for i in 0..k {
-            let max = x_k[i].abs().max(y_k[i].abs());
-            // Figure out what bin it belongs too.
-            for l in 0..10 {
-                if l as f64 <= max && max < (l + 1) as f64 {
-                    // Found the bin.
-                    counts[l] += 1;
-                    break;
-                }
-            }
+            let max_abs = x_k[i].abs().max(y_k[i].abs());
+            counts[max_abs as usize] += 1;
         }
 
         let sum_x: f64 = x_k.iter().sum();
@@ -208,6 +239,72 @@ impl EpKernel {
         });
     }
 
+    #[cfg(feature = "lazy-parallel")]
+    pub fn run(&mut self) {
+        let time = Instant::now();
+        // The 10 is not number of threads, rather its just how much the problem is broken up. Useful for keep k less than u32 size.
+        let parallel_lazy_randdp = ParallelLazyRanddp::new(self.s, 2 * self.n, self.a, 10);
+        let mut iters = parallel_lazy_randdp.to_vec();
+
+        let result: ([u64; 10], f64, f64) = iters
+            .par_iter_mut()
+            .map(|lazy_randdp| {
+                let mut counts = [0_u64; 10];
+                let mut sum_x = 0.0;
+                let mut sum_y = 0.0;
+                // TODO make this into an internal function?
+                while let (Some(a), Some(b)) = (lazy_randdp.next(), lazy_randdp.next()) {
+                    let x = 2.0 * a - 1.0;
+                    let y = 2.0 * b - 1.0;
+                    let t = x * x + y * y;
+                    if t <= 1.0 {
+                        let scale = (-2.0 * t.ln() / t).sqrt();
+                        let x_k = x * scale;
+                        let y_k = y * scale;
+                        let max_abs = x_k.abs().max(y_k.abs());
+                        counts[max_abs as usize] += 1;
+                        sum_x += x_k;
+                        sum_y += y_k;
+                    }
+                }
+                (counts, sum_x, sum_y)
+            })
+            .reduce(
+                || ([0_u64; 10], 0.0_f64, 0.0_f64), // Some zero values inserted in sequence when needed for parallelization.
+                |a, b| {
+                    // |a, b| Are the two tuples getting reduced into 1.
+                    // TODO this is pretty dirty surely there is a built in method to add two arrays together?
+                    // Atleast could make a macro to do this?
+                    let counts = [
+                        a.0[0] + b.0[0],
+                        a.0[1] + b.0[1],
+                        a.0[2] + b.0[2],
+                        a.0[3] + b.0[3],
+                        a.0[4] + b.0[4],
+                        a.0[5] + b.0[5],
+                        a.0[6] + b.0[6],
+                        a.0[7] + b.0[7],
+                        a.0[8] + b.0[8],
+                        a.0[9] + b.0[9],
+                    ];
+                    // let mut counts = [0_64; 10];
+                    // for i in 0..a.0.len() {
+                    //     counts[i] = a.0[i] + b.0[i];
+                    // }
+                    let sum_x = a.1 + b.1;
+                    let sum_y = a.2 + b.2;
+                    (counts, sum_x, sum_y)
+                },
+            );
+
+        self.output = Some(EpOutput {
+            elapsed_time: time.elapsed(),
+            counts: result.0,
+            sum_x: result.1,
+            sum_y: result.2,
+        });
+    }
+
     pub fn debug_print(&self) {
         let output = self
             .output
@@ -224,7 +321,9 @@ impl EpKernel {
 }
 
 fn main() {
-    let class = Class::B;
+    // TODO need to debug why D verification fails.
+    // let class = Class::D;
+    let class = Class::C;
     let mut kernel = EpKernel::from_class(class);
     kernel.run();
     kernel.verify();

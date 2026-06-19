@@ -123,6 +123,7 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "rayon",
 ]
 
 [[package]]
@@ -202,6 +203,7 @@ name = "ep"
 version = "0.1.0"
 dependencies = [
  "common",
+ "rayon",
 ]
 
 [[package]]
