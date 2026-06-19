@@ -1,8 +1,20 @@
 use std::time::Duration;
 // randdp, timing, verification, class sizes
 
+// Parallelism
+// x_(k+1) = a * x_k mod 2^46
+// x_0 = seed
+// x_1 = a * x_0 mod 2^46 = a * seed mod 2^46
+// x_2 = a * x_1 mod 2^46 = a * (a * seed mod 2^46) mod 2^46
+// x_3 = a * x_2 mod 2^46 = a * (a * (a * seed mod 2^46) mod 2^46) mod 2^46
+// x_4 = a * x_3 mod 2^46 = a * (a * (a * (a * seed mod 2^46) mod 2^46) mod 2^46) mod 2^46) mod 2^46
+// x_k = a^(k-1) * seed mod 2^46
+// Then we take k, say its 13, which in binary is 1101. a^13 = a^1 * a^4 * a^8
+// Take a mod 2^46 after every multiplication, so its (((a^1 mod 2^46) * a^4 mod 2^46) * a^8 mod 2^46)
+// TODO create skip_to function, then make a special function that returns an iterator of iterators.
+
 const B: u64 = 1_u64 << 46;
-const C: f64 = 0.000000000000014210854715202004; // 2.0_f64.powi(-46)
+const C: f64 = 1.0 / (1u64 << 46) as f64; // 2.0_f64.powi(-46)
 // Want to generate n uniform psuedo random numbers.
 // a = 5^13
 // x_0 = s, a specified initial seed. Where 0 < s < 2^46
@@ -11,10 +23,10 @@ const C: f64 = 0.000000000000014210854715202004; // 2.0_f64.powi(-46)
 // Then return r_k = 2^(-46)*x_k
 // Thus 0 < r_k < 1
 
-// Before LazyRanddp size was Option<u128> + usize + u128 + f64
-// or 1 + 16 + 8 + 16 + 8 = 48
+// Before LazyRanddp size was Option<u128> + usize + u128
+// or 1 + 16 + 8 + 16 = 40
 // After optimization storing u64 instead
-// 32
+// 24
 pub struct LazyRanddp {
     current: u64,
     n: usize,
