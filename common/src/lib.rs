@@ -1,6 +1,6 @@
 use std::time::Duration;
-// randdp, timing, verification, class sizes
 
+pub mod linear_algebra;
 // Parallelism
 // x_(k+1) = a * x_k mod 2^46
 // x_0 = seed
@@ -11,7 +11,6 @@ use std::time::Duration;
 // x_k = a^(k-1) * seed mod 2^46
 // Then we take k, say its 13, which in binary is 1101. a^13 = a^1 * a^4 * a^8
 // Take a mod 2^46 after every multiplication, so its (((a^1 mod 2^46) * a^4 mod 2^46) * a^8 mod 2^46)
-// TODO create skip_forward function, then make a special function that returns an iterator of iterators.
 
 const B: u64 = 1_u64 << 46;
 const C: f64 = 1.0 / (1u64 << 46) as f64; // 2.0_f64.powi(-46)

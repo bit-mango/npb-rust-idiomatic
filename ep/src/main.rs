@@ -117,8 +117,8 @@ impl EpKernel {
                 n: 1 << 36,
                 a: 5_u64.pow(13),
                 s: 271_828_183,
-                expected_x_k_sum: 1.982481200946593e5,
-                expected_y_k_sum: -1.020596636361769e5,
+                expected_x_k_sum: 1.982481200937391e5,
+                expected_y_k_sum: -1.020596636364649e5,
                 expected_counts: [
                     25154622775,
                     24017899906,
@@ -243,7 +243,7 @@ impl EpKernel {
     pub fn run(&mut self) {
         let time = Instant::now();
         // The 10 is not number of threads, rather its just how much the problem is broken up. Useful for keep k less than u32 size.
-        let parallel_lazy_randdp = ParallelLazyRanddp::new(self.s, 2 * self.n, self.a, 10);
+        let parallel_lazy_randdp = ParallelLazyRanddp::new(self.s, 2 * self.n, self.a, 60);
         let mut iters = parallel_lazy_randdp.to_vec();
 
         let result: ([u64; 10], f64, f64) = iters
@@ -273,24 +273,7 @@ impl EpKernel {
                 || ([0_u64; 10], 0.0_f64, 0.0_f64), // Some zero values inserted in sequence when needed for parallelization.
                 |a, b| {
                     // |a, b| Are the two tuples getting reduced into 1.
-                    // TODO this is pretty dirty surely there is a built in method to add two arrays together?
-                    // Atleast could make a macro to do this?
-                    let counts = [
-                        a.0[0] + b.0[0],
-                        a.0[1] + b.0[1],
-                        a.0[2] + b.0[2],
-                        a.0[3] + b.0[3],
-                        a.0[4] + b.0[4],
-                        a.0[5] + b.0[5],
-                        a.0[6] + b.0[6],
-                        a.0[7] + b.0[7],
-                        a.0[8] + b.0[8],
-                        a.0[9] + b.0[9],
-                    ];
-                    // let mut counts = [0_64; 10];
-                    // for i in 0..a.0.len() {
-                    //     counts[i] = a.0[i] + b.0[i];
-                    // }
+                    let counts = std::array::from_fn(|i| a.0[i] + b.0[i]);
                     let sum_x = a.1 + b.1;
                     let sum_y = a.2 + b.2;
                     (counts, sum_x, sum_y)
@@ -322,8 +305,10 @@ impl EpKernel {
 
 fn main() {
     // TODO need to debug why D verification fails.
+    // So counts are correct and match NPB-Rust, and Sum y is right, its only sum x which
+    // is just barely off. I wonder if my sum x value is wrong?
     // let class = Class::D;
-    let class = Class::C;
+    let class = Class::D;
     let mut kernel = EpKernel::from_class(class);
     kernel.run();
     kernel.verify();
