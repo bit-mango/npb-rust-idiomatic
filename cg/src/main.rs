@@ -1,8 +1,12 @@
 use common::{Class, LazyRanddp, assert_approx_eq};
+#[cfg(feature = "parallel")]
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+};
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use std::usize;
-
 const SEED: u64 = 314_159_265;
 const A: u64 = 5_u64.pow(13);
 
@@ -97,7 +101,6 @@ impl CgKernel {
             q: vec![0.0; self.n],
             az: vec![0.0; self.n],
             rn: vec![0.0; self.n],
-            time_in_multiply: 0,
         };
         let time = Instant::now();
 
@@ -115,11 +118,6 @@ impl CgKernel {
             }
         }
 
-        println!(
-            "Time in multiply: {}(s)",
-            sp.time_in_multiply as f64 / 1.0e3
-        );
-
         self.output = Some(CgOutput {
             elapsed_time: time.elapsed(),
             final_zeta: zeta,
@@ -136,8 +134,10 @@ impl CgKernel {
 }
 
 struct CompressedSparseMatrix {
-    rows: Vec<(u32, u32, u32)>, // row_idx, start_idx, end_idx
-    data: Vec<(u32, f64)>,      // col_idx, value
+    rows: Vec<u32>, // start_idx. No need to store row_idx because rows are sequential and we are guaranteed to have atleast
+    // one non zero element in each row because of the diagonal shift.
+    // TODO The size of this tuple in memory is 16 bytes, so possible optimization is to store this as 12 bytes
+    data: Vec<(u32, f64)>, // col_idx, value
 }
 
 impl CompressedSparseMatrix {
@@ -211,18 +211,19 @@ impl CompressedSparseMatrix {
         let mut intermediate: Vec<((usize, usize), f64)> = result.drain().collect();
         // Sort the intermediate values in ascending order first by row, then by col.
         intermediate.sort_by(|a, b| a.0.0.cmp(&b.0.0).then_with(|| a.0.1.cmp(&b.0.1)));
+        // Add dummy entry so that final row is pushed.
+        intermediate.push(((usize::MAX, 0), 0.0));
         let mut s = Self {
             rows: vec![],
             data: vec![],
         };
         let mut start_data_idx = 0;
-        let mut last_row_idx = intermediate[start_data_idx].0.0;
+        let mut last_row_idx = 0;
         for (i, entry) in intermediate.iter().enumerate() {
             if entry.0.0 != last_row_idx {
                 // On a new row now.
-                s.rows
-                    .push((last_row_idx as u32, start_data_idx as u32, i as u32));
-                last_row_idx = entry.0.0;
+                s.rows.push(start_data_idx as u32);
+                last_row_idx += 1;
                 start_data_idx = i;
             }
 
@@ -230,25 +231,41 @@ impl CompressedSparseMatrix {
             s.data.push((entry.0.1 as u32, entry.1));
         }
 
-        // Add final row.
-        s.rows.push((
-            last_row_idx as u32,
-            start_data_idx as u32,
-            s.data.len() as u32,
-        ));
+        // Add n+1 row entry so final row knows when to stop.
+        s.rows.push(s.data.len() as u32);
 
         s
     }
 
+    #[cfg(feature = "serial")]
     pub fn multiply(&self, v: &Vec<f64>, result: &mut Vec<f64>) {
-        for row in self.rows.iter() {
-            // row_idx is the idx of the result.
-            let mut sum = 0.0;
-            for r in &self.data[row.1 as usize..row.2 as usize] {
-                sum += v[r.0 as usize] * r.1;
-            }
-            result[row.0 as usize] = sum;
-        }
+        // The start of the next row is the end of the current row, so zip them into iterators.
+        (&self.rows[0..v.len()])
+            .into_iter()
+            .zip(&self.rows[1..v.len() + 1])
+            .zip(result)
+            .for_each(|((start, stop), res)| {
+                let mut sum = 0.0;
+                for r in &self.data[*start as usize..*stop as usize] {
+                    sum += v[r.0 as usize] * r.1;
+                }
+                *res = sum;
+            });
+    }
+
+    #[cfg(feature = "parallel")]
+    pub fn multiply(&self, v: &Vec<f64>, result: &mut Vec<f64>) {
+        // The start of the next row is the end of the current row, so zip them into iterators.
+        (&self.rows[0..v.len()], &self.rows[1..v.len() + 1])
+            .into_par_iter()
+            .zip(result.par_iter_mut())
+            .for_each(|((start, stop), res)| {
+                let mut sum = 0.0;
+                for r in &self.data[*start as usize..*stop as usize] {
+                    sum += v[r.0 as usize] * r.1;
+                }
+                *res = sum;
+            });
     }
 }
 
@@ -289,7 +306,6 @@ struct ScratchPad {
     pub q: Vec<f64>,
     pub az: Vec<f64>,
     pub rn: Vec<f64>,
-    pub time_in_multiply: u128,
 }
 
 fn conjugate_gradient(
@@ -304,9 +320,7 @@ fn conjugate_gradient(
     sp.p.copy_from_slice(x);
 
     for _ in 0..25 {
-        let time = Instant::now();
         a.multiply(&sp.p, &mut sp.q);
-        sp.time_in_multiply += time.elapsed().as_millis();
         let alpha = rho / multiply_vec(&sp.p, &sp.q);
         scale_and_increment(&sp.p, alpha, &mut sp.z);
         let rho_not = rho;
@@ -323,9 +337,11 @@ fn conjugate_gradient(
     euclidean_norm_vec(&sp.rn)
 }
 
+// type Item = (u32, u32, u32);
+
 fn main() {
-    println!("size of usize: {}", size_of::<usize>());
-    let mut kernel = CgKernel::from_class(Class::B);
+    // println!("size of Item: {}", size_of::<Item>());
+    let mut kernel = CgKernel::from_class(Class::C);
     kernel.run();
     kernel.verify();
     kernel.print();

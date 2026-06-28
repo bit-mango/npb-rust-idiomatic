@@ -5,3 +5,9 @@ edition = "2024"
 
 [dependencies]
 common = { path = "../common" }
+rayon = "1.12.0"
+
+[features]
+default = ["parallel"]
+parallel = []
+serial = []
