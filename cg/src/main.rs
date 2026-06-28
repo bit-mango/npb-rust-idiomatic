@@ -90,21 +90,35 @@ impl CgKernel {
         let mut a = CompressedSparseMatrix::new(self.n, self.gamma, self.nonzero);
         let mut x = vec![1.0_f64; self.n];
         let mut zeta = 0.0;
+        let mut sp = ScratchPad {
+            z: vec![0.0; self.n],
+            r: vec![0.0; self.n],
+            p: vec![0.0; self.n],
+            q: vec![0.0; self.n],
+            az: vec![0.0; self.n],
+            rn: vec![0.0; self.n],
+            time_in_multiply: 0,
+        };
         let time = Instant::now();
 
         for i in 0..self.n_iter {
-            let (residual_norm, z) = conjugate_gradient(self.n, &x, &mut a);
-            zeta = self.gamma + 1.0 / multiply_vec(&x, &z);
+            let residual_norm = conjugate_gradient(self.n, &x, &mut a, &mut sp);
+            zeta = self.gamma + 1.0 / multiply_vec(&x, &sp.z);
             println!(
                 "[{}] residual_norm: {:e}, zeta: {:e}",
                 i, residual_norm, zeta
             );
 
-            let norm = euclidean_norm_vec(&z);
+            let norm = euclidean_norm_vec(&sp.z);
             for i in 0..self.n {
-                x[i] = z[i] / norm;
+                x[i] = sp.z[i] / norm;
             }
         }
+
+        println!(
+            "Time in multiply: {}(s)",
+            sp.time_in_multiply as f64 / 1.0e3
+        );
 
         self.output = Some(CgOutput {
             elapsed_time: time.elapsed(),
@@ -122,8 +136,8 @@ impl CgKernel {
 }
 
 struct CompressedSparseMatrix {
-    rows: Vec<(usize, usize, usize)>, // row_idx, start_idx, end_idx
-    data: Vec<(usize, f64)>,          // col_idx, value
+    rows: Vec<(u32, u32, u32)>, // row_idx, start_idx, end_idx
+    data: Vec<(u32, f64)>,      // col_idx, value
 }
 
 impl CompressedSparseMatrix {
@@ -206,34 +220,35 @@ impl CompressedSparseMatrix {
         for (i, entry) in intermediate.iter().enumerate() {
             if entry.0.0 != last_row_idx {
                 // On a new row now.
-                s.rows.push((last_row_idx, start_data_idx, i));
+                s.rows
+                    .push((last_row_idx as u32, start_data_idx as u32, i as u32));
                 last_row_idx = entry.0.0;
                 start_data_idx = i;
             }
 
             // Add entry to data.
-            s.data.push((entry.0.1, entry.1));
+            s.data.push((entry.0.1 as u32, entry.1));
         }
 
         // Add final row.
-        s.rows.push((last_row_idx, start_data_idx, s.data.len()));
+        s.rows.push((
+            last_row_idx as u32,
+            start_data_idx as u32,
+            s.data.len() as u32,
+        ));
 
         s
     }
 
-    pub fn multiply(&self, v: &Vec<f64>) -> Vec<f64> {
-        let mut result = vec![0.0; v.len()];
-
+    pub fn multiply(&self, v: &Vec<f64>, result: &mut Vec<f64>) {
         for row in self.rows.iter() {
             // row_idx is the idx of the result.
             let mut sum = 0.0;
-            for r in &self.data[row.1..row.2] {
-                sum += v[r.0] * r.1;
+            for r in &self.data[row.1 as usize..row.2 as usize] {
+                sum += v[r.0 as usize] * r.1;
             }
-            result[row.0] = sum;
+            result[row.0 as usize] = sum;
         }
-
-        result
     }
 }
 
@@ -249,44 +264,67 @@ pub fn euclidean_norm_vec(v: &Vec<f64>) -> f64 {
     square_vec(v).sqrt()
 }
 
-pub fn scalar_multiply_vec(v: &Vec<f64>, s: f64) -> Vec<f64> {
-    v.iter().map(|e| e * s).collect()
+pub fn scale_and_add(v: &Vec<f64>, scalar: f64, result: &mut Vec<f64>) {
+    for i in 0..result.len() {
+        result[i] = v[i] + scalar * result[i];
+    }
 }
 
-fn conjugate_gradient(n: usize, x: &Vec<f64>, a: &mut CompressedSparseMatrix) -> (f64, Vec<f64>) {
-    let mut z = vec![0.0; n];
-    let mut r = x.clone();
-    let mut rho = square_vec(&r);
-    let mut p = r.clone();
+pub fn scale_and_increment(v: &Vec<f64>, scalar: f64, result: &mut Vec<f64>) {
+    for i in 0..result.len() {
+        result[i] += scalar * v[i];
+    }
+}
+
+pub fn scale_and_decrement(v: &Vec<f64>, scalar: f64, result: &mut Vec<f64>) {
+    for i in 0..result.len() {
+        result[i] -= scalar * v[i];
+    }
+}
+
+struct ScratchPad {
+    pub z: Vec<f64>,
+    pub r: Vec<f64>,
+    pub p: Vec<f64>,
+    pub q: Vec<f64>,
+    pub az: Vec<f64>,
+    pub rn: Vec<f64>,
+    pub time_in_multiply: u128,
+}
+
+fn conjugate_gradient(
+    n: usize,
+    x: &Vec<f64>,
+    a: &mut CompressedSparseMatrix,
+    sp: &mut ScratchPad,
+) -> f64 {
+    sp.z.fill(0.0);
+    sp.r.copy_from_slice(x);
+    let mut rho = square_vec(&sp.r);
+    sp.p.copy_from_slice(x);
 
     for _ in 0..25 {
-        let q = a.multiply(&p);
-        let alpha = rho / multiply_vec(&p, &q);
-        let alpha_p = scalar_multiply_vec(&p, alpha);
-        for i in 0..n {
-            z[i] += alpha_p[i];
-        }
+        let time = Instant::now();
+        a.multiply(&sp.p, &mut sp.q);
+        sp.time_in_multiply += time.elapsed().as_millis();
+        let alpha = rho / multiply_vec(&sp.p, &sp.q);
+        scale_and_increment(&sp.p, alpha, &mut sp.z);
         let rho_not = rho;
-        let alpha_q = scalar_multiply_vec(&q, alpha);
-        for i in 0..n {
-            r[i] -= alpha_q[i];
-        }
-        rho = square_vec(&r);
+        scale_and_decrement(&sp.q, alpha, &mut sp.r);
+        rho = square_vec(&sp.r);
         let beta = rho / rho_not;
-        let beta_p = scalar_multiply_vec(&p, beta);
-        for i in 0..n {
-            p[i] = r[i] + beta_p[i];
-        }
+        scale_and_add(&sp.r, beta, &mut sp.p);
     }
-    let az = a.multiply(&z);
-    let mut rn = x.clone();
+    a.multiply(&sp.z, &mut sp.az);
+    sp.rn.copy_from_slice(x);
     for i in 0..n {
-        rn[i] -= az[i];
+        sp.rn[i] -= sp.az[i];
     }
-    (euclidean_norm_vec(&rn), z)
+    euclidean_norm_vec(&sp.rn)
 }
 
 fn main() {
+    println!("size of usize: {}", size_of::<usize>());
     let mut kernel = CgKernel::from_class(Class::B);
     kernel.run();
     kernel.verify();
