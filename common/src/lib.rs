@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-pub mod linear_algebra;
 // Parallelism
 // x_(k+1) = a * x_k mod 2^46
 // x_0 = seed
