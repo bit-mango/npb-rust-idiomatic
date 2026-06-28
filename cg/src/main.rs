@@ -121,33 +121,16 @@ impl CgKernel {
     }
 }
 
-// TODO maybe changing this so its a single vec so all data is in 1 place in memory?
 struct CompressedSparseMatrix {
-    rows: Vec<SparseRow>,
-}
-
-struct SparseRow {
-    row_idx: usize,
-    non_zero_entries_with_col: Vec<(f64, usize)>,
-}
-
-impl SparseRow {
-    pub fn new(row_idx: usize) -> Self {
-        Self {
-            row_idx,
-            non_zero_entries_with_col: vec![],
-        }
-    }
-
-    pub fn add(&mut self, entry: (f64, usize)) {
-        self.non_zero_entries_with_col.push(entry);
-    }
+    rows: Vec<(usize, usize, usize)>, // row_idx, start_idx, end_idx
+    data: Vec<(usize, f64)>,          // col_idx, value
 }
 
 impl CompressedSparseMatrix {
     pub fn new(n: usize, shift: f64, nonzero: usize) -> Self {
         let mut sparse_vectors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(n);
         // Generate the random numbers we need.
+        // Use usize::MAX because the exact amount of numbers is not known until it is run as some are thrown away.
         let mut randdp = LazyRanddp::new(SEED, usize::MAX, A);
         // NPB-Rust's main() calls randlc() once before makea() runs, advancing
         // the RNG state by one step. The returned value is discarded (assigned to
@@ -214,24 +197,28 @@ impl CompressedSparseMatrix {
         let mut intermediate: Vec<((usize, usize), f64)> = result.drain().collect();
         // Sort the intermediate values in ascending order first by row, then by col.
         intermediate.sort_by(|a, b| a.0.0.cmp(&b.0.0).then_with(|| a.0.1.cmp(&b.0.1)));
-        let mut rows: Vec<SparseRow> = Vec::new();
-        for entry in intermediate.iter() {
-            if let Some(row) = rows.last_mut() {
-                if row.row_idx == entry.0.0 {
-                    row.add((entry.1, entry.0.1));
-                } else {
-                    let mut new_row = SparseRow::new(entry.0.0);
-                    new_row.add((entry.1, entry.0.1));
-                    rows.push(new_row);
-                }
-            } else {
-                let mut new_row = SparseRow::new(entry.0.0);
-                new_row.add((entry.1, entry.0.1));
-                rows.push(new_row);
+        let mut s = Self {
+            rows: vec![],
+            data: vec![],
+        };
+        let mut start_data_idx = 0;
+        let mut last_row_idx = intermediate[start_data_idx].0.0;
+        for (i, entry) in intermediate.iter().enumerate() {
+            if entry.0.0 != last_row_idx {
+                // On a new row now.
+                s.rows.push((last_row_idx, start_data_idx, i));
+                last_row_idx = entry.0.0;
+                start_data_idx = i;
             }
+
+            // Add entry to data.
+            s.data.push((entry.0.1, entry.1));
         }
 
-        Self { rows }
+        // Add final row.
+        s.rows.push((last_row_idx, start_data_idx, s.data.len()));
+
+        s
     }
 
     pub fn multiply(&self, v: &Vec<f64>) -> Vec<f64> {
@@ -240,10 +227,10 @@ impl CompressedSparseMatrix {
         for row in self.rows.iter() {
             // row_idx is the idx of the result.
             let mut sum = 0.0;
-            for entry in row.non_zero_entries_with_col.iter() {
-                sum += entry.0 * v[entry.1];
+            for r in &self.data[row.1..row.2] {
+                sum += v[r.0] * r.1;
             }
-            result[row.row_idx] = sum;
+            result[row.0] = sum;
         }
 
         result
