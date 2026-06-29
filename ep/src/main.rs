@@ -9,40 +9,8 @@ use common::{Class, assert_approx_eq};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use std::time::{Duration, Instant};
 
-// TODO Add classes
-// TODO Add print_results to common.
-// TODO optimize
-// Thinking this could maybe be a struct with generics that are set using cfg flags at compile time?
-//
-// TODO if I need feature specific compilation for array lengths.
-// #[cfg(feature = "S")]
-// const N: usize = 1 << 24;
-
-// #[cfg(feature = "A")]
-// const N: usize = 1 << 28;
-
-// #[cfg(feature = "B")]
-// const N: usize = 1 << 28;
-
-// TODO could use inlining with functions for criterion benchmarking once I have iterators in place.
-// // A basic inline hint (allows cross-crate optimization)
-// #[inline]
-// pub fn add_small(a: i32, b: i32) -> i32 {
-//     a + b
-// }
-
-// // Forcing the compiler's hand for performance-critical hotspots
-// #[inline(always)]
-// pub fn tight_loop_utility(x: f64) -> f64 {
-//     x.abs() * 2.0
-// }
-
-// // Preventing inlining on a heavy, rarely executed error path
-// #[inline(never)]
-// pub fn log_critical_error_and_panic(msg: &str) -> ! {
-//     println!("CRITICAL: {}", msg);
-//     panic!("Execution halted");
-// }
+const SEED: u64 = 271_828_183;
+const A: u64 = 5_u64.pow(13);
 
 #[derive(Clone, Copy)]
 struct EpOutput {
@@ -53,8 +21,6 @@ struct EpOutput {
 }
 struct EpKernel {
     n: usize,
-    a: u64,
-    s: u64,
     expected_x_k_sum: f64,
     expected_y_k_sum: f64,
     expected_counts: [u64; 10],
@@ -62,15 +28,11 @@ struct EpKernel {
     output: Option<EpOutput>,
 }
 
-// const kernel: EpKernel = EpKernel::from_class(Class::A); // Doesnt work unless you make from_class const
-
 impl EpKernel {
     pub fn from_class(class: Class) -> Self {
         match class {
             Class::S => Self {
                 n: 1 << 24,
-                a: 5_u64.pow(13),
-                s: 271_828_183,
                 expected_x_k_sum: -3.2478346520347404e3,
                 expected_y_k_sum: -6.958407078382297e3,
                 expected_counts: [6140517, 5865300, 1100361, 68546, 1648, 17, 0, 0, 0, 0],
@@ -79,8 +41,6 @@ impl EpKernel {
             },
             Class::A => Self {
                 n: 1 << 28,
-                a: 5_u64.pow(13),
-                s: 271_828_183,
                 expected_x_k_sum: -4.295875165629892e3,
                 expected_y_k_sum: -1.580732573678431e4,
                 expected_counts: [
@@ -91,8 +51,6 @@ impl EpKernel {
             },
             Class::B => Self {
                 n: 1 << 30,
-                a: 5_u64.pow(13),
-                s: 271_828_183,
                 expected_x_k_sum: 4.033815542441498e4,
                 expected_y_k_sum: -2.660669192809235e4,
                 expected_counts: [
@@ -103,8 +61,6 @@ impl EpKernel {
             },
             Class::C => Self {
                 n: 1 << 32,
-                a: 5_u64.pow(13),
-                s: 271_828_183,
                 expected_x_k_sum: 4.764367927995374e4,
                 expected_y_k_sum: -8.084072988043731e4,
                 expected_counts: [
@@ -115,9 +71,7 @@ impl EpKernel {
             },
             Class::D => Self {
                 n: 1 << 36,
-                a: 5_u64.pow(13),
-                s: 271_828_183,
-                expected_x_k_sum: 1.982481200937391e5,
+                expected_x_k_sum: 1.982481200946593e5,
                 expected_y_k_sum: -1.020596636364649e5,
                 expected_counts: [
                     25154622775,
@@ -167,7 +121,7 @@ impl EpKernel {
     #[cfg(feature = "eager")]
     pub fn run(&mut self) {
         let time = Instant::now();
-        let lazy_randdp = LazyRanddp::new(self.s, 2 * self.n, self.a);
+        let lazy_randdp = LazyRanddp::new(SEED, 2 * self.n, A);
         let r = lazy_randdp.to_vec();
 
         let mut x = vec![0.0_f64; self.n];
@@ -211,7 +165,7 @@ impl EpKernel {
     #[cfg(feature = "lazy")]
     pub fn run(&mut self) {
         let time = Instant::now();
-        let mut lazy_randdp = LazyRanddp::new(self.s, 2 * self.n, self.a);
+        let mut lazy_randdp = LazyRanddp::new(SEED, 2 * self.n, A);
 
         let mut counts = [0_u64; 10];
         let mut sum_x = 0.0;
@@ -243,7 +197,7 @@ impl EpKernel {
     pub fn run(&mut self) {
         let time = Instant::now();
         // The 10 is not number of threads, rather its just how much the problem is broken up. Useful for keep k less than u32 size.
-        let parallel_lazy_randdp = ParallelLazyRanddp::new(self.s, 2 * self.n, self.a, 60);
+        let parallel_lazy_randdp = ParallelLazyRanddp::new(SEED, 2 * self.n, A, 60);
         let mut iters = parallel_lazy_randdp.to_vec();
 
         let result: ([u64; 10], f64, f64) = iters

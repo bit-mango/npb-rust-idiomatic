@@ -10,14 +10,6 @@ use std::usize;
 const SEED: u64 = 314_159_265;
 const A: u64 = 5_u64.pow(13);
 
-// #[cfg(class = "S")]
-// mod params {
-//     const N: usize = 1400;
-//     const N_ITER: usize = 15;
-//     const NONZERO: usize = 7;
-//     const GAMMA: f64 = 10.0;
-// }
-//
 #[derive(Clone, Copy)]
 struct CgOutput {
     elapsed_time: Duration,
@@ -161,7 +153,6 @@ impl CompressedSparseMatrix {
                 let random_idx = (randdp.next().unwrap() * ipwr2 as f64) as usize;
 
                 // If random idx is too large, or already used skip it.
-                // println!("random_num: {}, i: {}", random_num, random_idx);
                 if random_idx >= n || x.contains_key(&random_idx) {
                     continue;
                 }
@@ -175,11 +166,14 @@ impl CompressedSparseMatrix {
             sparse_vectors.push(x.drain().collect());
         }
 
-        // Store results in a hashmap.
+        // Store results in a hashmap for easy deduping.
         let mut result: HashMap<(usize, usize), f64> = HashMap::new();
         let mut size = 1.0;
         let r = 0.1_f64.powf(1.0 / (n as f64));
 
+        // We only care about non-zero values in the sparse vector,
+        // so we iterate through it twice as the only (i,j) indexes
+        // that will be zero are the ones where both values are non-zero.
         for vec in sparse_vectors.iter() {
             for left in vec {
                 for right in vec {
@@ -190,8 +184,10 @@ impl CompressedSparseMatrix {
                     let new = size * outer_product;
                     // Check if new already exists.
                     if let Some(existing) = result.get(&key) {
+                        // If so add new + existing.
                         result.insert(key, existing + new);
                     } else {
+                        // Else just insert new.
                         result.insert(key, new);
                     }
                 }
@@ -299,6 +295,8 @@ pub fn scale_and_decrement(v: &Vec<f64>, scalar: f64, result: &mut Vec<f64>) {
     }
 }
 
+// Helper type so that vec allocations only happen during setup,
+// and not in hot path.
 struct ScratchPad {
     pub z: Vec<f64>,
     pub r: Vec<f64>,
@@ -337,11 +335,8 @@ fn conjugate_gradient(
     euclidean_norm_vec(&sp.rn)
 }
 
-// type Item = (u32, u32, u32);
-
 fn main() {
-    // println!("size of Item: {}", size_of::<Item>());
-    let mut kernel = CgKernel::from_class(Class::C);
+    let mut kernel = CgKernel::from_class(Class::A);
     kernel.run();
     kernel.verify();
     kernel.print();
