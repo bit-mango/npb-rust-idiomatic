@@ -1,0 +1,13 @@
+[package]
+name = "is"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+rayon = "1.12.0"
+
+[features]
+default = ["serial"]
+serial = []
+parallel = []

@@ -1,6 +1,6 @@
 [workspace]
 members = ["cg",
     "common",
-    "ep",
+    "ep", "is",
 ]
 resolver = "2"
